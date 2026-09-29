@@ -45,7 +45,7 @@ class _TivioSplashScreenState extends State<TivioSplashScreen> {
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
         PageRouteBuilder(
-          pageBuilder: (_, __, ___) => PremiumOttPlayerScreen(),
+          pageBuilder: (_, __, ___) => const PremiumOttPlayerScreen(),
           transitionsBuilder: (_, animation, __, child) => FadeTransition(
             opacity: animation,
             child: child,
@@ -565,7 +565,7 @@ class _PremiumOttPlayerScreenState extends State<PremiumOttPlayerScreen> {
             _categoryTile('Favorites'),
             const SizedBox(height: 12),
             const Text(
-              'v1.0 • STREAM READY',
+              'v1.0 • FREE TO USE',
               style: TextStyle(color: TivioColors.muted, fontSize: 11),
             ),
           ],
@@ -703,7 +703,7 @@ class _PremiumOttPlayerScreenState extends State<PremiumOttPlayerScreen> {
           const SizedBox(height: 12),
           _buildContinueWatchingRow(),
           const SizedBox(height: 24),
-          _buildMiniSectionHeader('Tonight’s lineup'),
+          _buildMiniSectionHeader('Tonight\'s lineup'),
           const SizedBox(height: 14),
           _buildEpg(),
           const SizedBox(height: 24),
@@ -885,7 +885,7 @@ class _PremiumOttPlayerScreenState extends State<PremiumOttPlayerScreen> {
                   children: [
                     _pill('4K UHD'),
                     _pill('Dolby Vision'),
-                    _pill('Sports'),
+                    _pill('Free'),
                   ],
                 ),
               ],
@@ -1029,19 +1029,9 @@ class _PremiumOttPlayerScreenState extends State<PremiumOttPlayerScreen> {
           _settingsTile('Loaded channels', '${_channels.length}'),
           _settingsTile('Favorites', '${_favorites.length} saved'),
           _settingsTile('Playback', 'Auto play enabled • Live mode'),
+          _settingsTile('Access', 'Free to use • No login required'),
           const SizedBox(height: 20),
-          ElevatedButton.icon(
-            onPressed: _loadPlaylist,
-            icon: const Icon(Icons.refresh_rounded),
-            label: const Text('Reload playlist'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: TivioColors.cyan,
-              foregroundColor: Colors.black,
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            ),
-          ),
-          if (_loadError != null) ...[
+          ElevatedButton.icon(\n            onPressed: _loadPlaylist,\n            icon: const Icon(Icons.refresh_rounded),\n            label: const Text('Reload playlist'),\n            style: ElevatedButton.styleFrom(\n              backgroundColor: TivioColors.cyan,\n              foregroundColor: Colors.black,\n              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),\n              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),\n            ),\n          ),\n          if (_loadError != null) ...[
             const SizedBox(height: 20),
             Container(
               padding: const EdgeInsets.all(14),
