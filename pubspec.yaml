@@ -13,6 +13,7 @@ dependencies:
   http: ^1.2.1
   video_player: ^2.8.6
   chewie: ^1.8.1
+  provider: ^6.1.0
 
 flutter:
   uses-material-design: true
