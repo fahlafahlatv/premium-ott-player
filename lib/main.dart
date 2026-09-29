@@ -19,6 +19,10 @@ class TivioApp extends StatelessWidget {
         theme: ThemeData.dark(useMaterial3: true).copyWith(
           scaffoldBackgroundColor: TivioColors.background,
           colorScheme: const ColorScheme.dark(primary: TivioColors.cyan),
+          textTheme: ThemeData.dark(useMaterial3: true).textTheme.apply(
+            bodyColor: Colors.white,
+            displayColor: Colors.white,
+          ),
         ),
         home: PremiumOttPlayerScreen(playlistUrl: playlistUrl),
       );
@@ -27,15 +31,32 @@ class TivioApp extends StatelessWidget {
 class TivioColors {
   static const background = Color(0xff040714);
   static const panel = Color(0xff090e22);
-  static const panel2 = Color(0xff111936);
+  static const panelAlt = Color(0xff101a32);
   static const cyan = Color(0xff00e5ff);
-  static const muted = Color(0xff8290ad);
+  static const muted = Color(0xff7f8ea6);
 }
 
 class IptvChannel {
-  const IptvChannel({required this.id, required this.name, required this.logo, required this.category, required this.program, required this.details, required this.progress, required this.streamUrl, this.isRadio = false});
-  final String id, name, logo, category, program, details, streamUrl;
+  const IptvChannel({
+    required this.id,
+    required this.name,
+    required this.logo,
+    required this.category,
+    required this.program,
+    required this.details,
+    required this.progress,
+    required this.streamUrl,
+    this.isRadio = false,
+  });
+
+  final String id;
+  final String name;
+  final String logo;
+  final String category;
+  final String program;
+  final String details;
   final double progress;
+  final String streamUrl;
   final bool isRadio;
 }
 
@@ -48,27 +69,92 @@ class PremiumOttPlayerScreen extends StatefulWidget {
 }
 
 class _PremiumOttPlayerScreenState extends State<PremiumOttPlayerScreen> {
-  VideoPlayerController? _video;
-  ChewieController? _chewie;
-  Timer? _retryTimer;
-  List<IptvChannel> channels = [];
-  Set<String> favorites = {};
-  String category = 'All';
-  String query = '';
-  String? currentId;
-  bool loading = true, reconnecting = false, settings = false, sidebarOpen = true;
-  int retrySeconds = 5;
-  Object? loadError;
+  final List<IptvChannel> _fallbackChannels = const [
+    IptvChannel(
+      id: 'tivio-one',
+      name: 'TIVIO One',
+      logo: 'https://images.unsplash.com/photo-1516280440614-37939bbacd81?auto=format&fit=crop&w=200&q=80',
+      category: 'Featured',
+      program: 'The Morning Feed',
+      details: 'Live broadcast • HD',
+      progress: 0.42,
+      streamUrl: 'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4',
+    ),
+    IptvChannel(
+      id: 'tivio-sport',
+      name: 'TIVIO Sport',
+      logo: 'https://images.unsplash.com/photo-1547347298-4074fc3086f0?auto=format&fit=crop&w=200&q=80',
+      category: 'Sports',
+      program: 'Championship Night',
+      details: 'Live arena • 4K',
+      progress: 0.78,
+      streamUrl: 'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerMeltdowns.mp4',
+    ),
+    IptvChannel(
+      id: 'tivio-cinema',
+      name: 'TIVIO Cinema',
+      logo: 'https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?auto=format&fit=crop&w=200&q=80',
+      category: 'Movies',
+      program: 'Neon Horizon',
+      details: 'Premiere • Dolby',
+      progress: 0.65,
+      streamUrl: 'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4',
+    ),
+    IptvChannel(
+      id: 'tivio-music',
+      name: 'TIVIO Beats',
+      logo: 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?auto=format&fit=crop&w=200&q=80',
+      category: 'Music',
+      program: 'Live Session',
+      details: 'Audio stream • Studio',
+      progress: 0.51,
+      streamUrl: 'https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+      isRadio: true,
+    ),
+  ];
 
-  final categories = <String>['All'];
-  static const demoPlaylist = 'https://storage.googleapis.com/coverr-main/mp4/Mt_Baker.mp4';
+  List<IptvChannel> _channels = [];
+  Set<String> _favorites = {};
+  Timer? _reconnectTimer;
+  VideoPlayerController? _videoController;
+  ChewieController? _chewieController;
 
-  IptvChannel? get current => channels.where((c) => c.id == currentId).firstOrNull;
-  List<IptvChannel> get visibleChannels => channels.where((c) {
-        final categoryMatch = category == 'All' || c.category == category;
-        final queryMatch = query.isEmpty || c.name.toLowerCase().contains(query.toLowerCase()) || c.category.toLowerCase().contains(query.toLowerCase());
-        return categoryMatch && queryMatch;
-      }).toList();
+  bool _loading = true;
+  bool _reconnecting = false;
+  bool _showSettings = false;
+  bool _sidebarVisible = true;
+  String _selectedCategory = 'All';
+  String _searchQuery = '';
+  String? _currentChannelId;
+  String? _loadError;
+
+  List<String> get _categories {
+    final names = <String>{'All'};
+    for (final channel in _channels) {
+      names.add(channel.category);
+    }
+    return names.toList()..sort();
+  }
+
+  IptvChannel? get _currentChannel => _channels.isEmpty ? null : _channels.firstWhere(
+        (channel) => channel.id == _currentChannelId,
+        orElse: () => _channels.first,
+      );
+
+  List<IptvChannel> get _filteredChannels {
+    final base = _selectedCategory == 'Favorites'
+        ? _channels.where((channel) => _favorites.contains(channel.id))
+        : _channels.where((channel) {
+            final categoryOk = _selectedCategory == 'All' || channel.category == _selectedCategory;
+            final queryOk = _searchQuery.trim().isEmpty ||
+                channel.name.toLowerCase().contains(_searchQuery.toLowerCase()) ||
+                channel.category.toLowerCase().contains(_searchQuery.toLowerCase()) ||
+                channel.program.toLowerCase().contains(_searchQuery.toLowerCase());
+            return categoryOk && queryOk;
+          });
+
+    return base.toList();
+  }
 
   @override
   void initState() {
@@ -78,105 +164,651 @@ class _PremiumOttPlayerScreenState extends State<PremiumOttPlayerScreen> {
 
   @override
   void dispose() {
-    _retryTimer?.cancel();
-    _chewie?.dispose();
-    _video?.dispose();
+    _reconnectTimer?.cancel();
+    _chewieController?.dispose();
+    _videoController?.dispose();
     super.dispose();
   }
 
   Future<void> _loadPlaylist() async {
-    setState(() { loading = true; loadError = null; });
+    setState(() {
+      _loading = true;
+      _loadError = null;
+    });
+
     try {
-      final source = widget.playlistUrl;
-      String body;
-      if (source == null || source.isEmpty) {
-        body = '#EXTM3U\n#EXTINF:-1 group-title="Demo",TIVIO One\n$demoPlaylist\n#EXTINF:-1 group-title="Demo",TIVIO Cinema\n$demoPlaylist';
+      final String body;
+      if (widget.playlistUrl == null || widget.playlistUrl!.trim().isEmpty) {
+        body = _buildDemoPlaylist();
       } else {
-        final response = await http.get(Uri.parse(source)).timeout(const Duration(seconds: 20));
-        if (response.statusCode != 200) throw Exception('Playlist returned ${response.statusCode}');
+        final response = await http.get(Uri.parse(widget.playlistUrl!)).timeout(const Duration(seconds: 20));
+        if (response.statusCode != 200) {
+          throw Exception('Playlist request failed with status ${response.statusCode}.');
+        }
         body = response.body;
       }
+
       final parsed = _parseM3u(body);
-      if (parsed.isEmpty) throw Exception('No playable channels found');
-      setState(() { channels = parsed; categories..clear()..addAll({'All', ...parsed.map((e) => e.category)}); loading = false; });
-      await _tune(parsed.first);
-    } catch (e) {
-      setState(() { loadError = e; channels = _demoChannels; categories..clear()..addAll({'All', ..._demoChannels.map((e) => e.category)}); loading = false; });
-      if (channels.isNotEmpty) await _tune(channels.first);
+      if (parsed.isEmpty) {
+        throw Exception('No playable channels were found in the playlist.');
+      }
+
+      setState(() {
+        _channels = parsed;
+        _loading = false;
+      });
+
+      if (_channels.isNotEmpty) {
+        await _tuneInto(_channels.first);
+      }
+    } catch (error) {
+      debugPrint('Playlist load failed: $error');
+      setState(() {
+        _channels = _fallbackChannels;
+        _loadError = error.toString();
+        _loading = false;
+      });
+
+      if (_channels.isNotEmpty) {
+        await _tuneInto(_channels.first);
+      }
     }
   }
 
-  List<IptvChannel> _parseM3u(String text) {
-    final lines = const LineSplitter().convert(text).map((e) => e.trim()).toList();
+  String _buildDemoPlaylist() {
+    final channels = [
+      '#EXTM3U',
+      '#EXTINF:-1 group-title="Featured" tvg-logo="https://images.unsplash.com/photo-1516280440614-37939bbacd81?auto=format&fit=crop&w=96&q=80",TIVIO One',
+      'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4',
+      '#EXTINF:-1 group-title="Sports" tvg-logo="https://images.unsplash.com/photo-1547347298-4074fc3086f0?auto=format&fit=crop&w=96&q=80",TIVIO Sport',
+      'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerMeltdowns.mp4',
+      '#EXTINF:-1 group-title="Movies" tvg-logo="https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?auto=format&fit=crop&w=96&q=80",TIVIO Cinema',
+      'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4',
+      '#EXTINF:-1 group-title="Music" tvg-logo="https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?auto=format&fit=crop&w=96&q=80",TIVIO Beats',
+      'https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+    ];
+    return channels.join('\n');
+  }
+
+  List<IptvChannel> _parseM3u(String body) {
+    final lines = const LineSplitter().convert(body).map((line) => line.trim()).toList();
     final result = <IptvChannel>[];
-    String name = 'TIVIO Channel', group = 'General', logo = '';
-    for (var i = 0; i < lines.length; i++) {
+
+    String currentGroup = 'General';
+    String currentLogo = '';
+    String currentName = 'TIVIO Channel';
+
+    for (int i = 0; i < lines.length; i++) {
       final line = lines[i];
-      if (line.startsWith('#EXTINF:')) {
-        group = RegExp(r'group-title="([^"]*)"').firstMatch(line)?.group(1) ?? 'General';
-        logo = RegExp(r'tvg-logo="([^"]*)"').firstMatch(line)?.group(1) ?? '';
-        final comma = line.lastIndexOf(',');
-        name = comma >= 0 ? line.substring(comma + 1).trim() : name;
-      } else if (line.isNotEmpty && !line.startsWith('#') && Uri.tryParse(line)?.hasScheme == true) {
-        result.add(IptvChannel(id: '${name}_${result.length}', name: name, logo: logo, category: group, program: 'Live now', details: 'TIVIO • Live broadcast', progress: .45, streamUrl: line, isRadio: group.toLowerCase().contains('radio')));
+      if (line.isEmpty) {
+        continue;
       }
+
+      if (line.startsWith('#EXTINF:')) {
+        final groupMatch = RegExp(r'group-title="([^"]+)"').firstMatch(line);
+        if (groupMatch != null) {
+          currentGroup = groupMatch.group(1) ?? 'General';
+        }
+
+        final logoMatch = RegExp(r'tvg-logo="([^"]+)"').firstMatch(line);
+        if (logoMatch != null) {
+          currentLogo = logoMatch.group(1) ?? '';
+        }
+
+        final commaIndex = line.lastIndexOf(',');
+        if (commaIndex != -1 && commaIndex < line.length - 1) {
+          currentName = line.substring(commaIndex + 1).trim();
+        }
+        continue;
+      }
+
+      if (line.startsWith('#')) {
+        continue;
+      }
+
+      final parsedUrl = Uri.tryParse(line);
+      if (parsedUrl == null || !parsedUrl.hasScheme) {
+        continue;
+      }
+
+      result.add(
+        IptvChannel(
+          id: '${currentName}_${result.length}_${line.hashCode}',
+          name: currentName,
+          logo: currentLogo.isNotEmpty ? currentLogo : 'https://images.unsplash.com/photo-1522869635100-9f4c5e86aa37?auto=format&fit=crop&w=200&q=80',
+          category: currentGroup,
+          program: 'Live Curated Broadcast',
+          details: 'TIVIO • Secure stream',
+          progress: 0.48,
+          streamUrl: line,
+          isRadio: currentGroup.toLowerCase().contains('radio'),
+        ),
+      );
+
+      currentLogo = '';
     }
+
     return result;
   }
 
-  Future<void> _tune(IptvChannel channel) async {
-    if (currentId == channel.id && _chewie != null) return;
-    _retryTimer?.cancel();
-    setState(() { currentId = channel.id; reconnecting = false; });
-    _chewie?.dispose();
-    _video?.dispose();
+  Future<void> _tuneInto(IptvChannel channel) async {
+    if (_currentChannelId == channel.id && _chewieController != null) {
+      return;
+    }
+
+    _reconnectTimer?.cancel();
+    setState(() {
+      _currentChannelId = channel.id;
+      _reconnecting = false;
+    });
+
+    _chewieController?.dispose();
+    _chewieController = null;
+    _videoController?.dispose();
+    _videoController = null;
+
     try {
-      final video = VideoPlayerController.networkUrl(Uri.parse(channel.streamUrl));
-      await video.initialize();
-      if (!mounted) { video.dispose(); return; }
-      _video = video;
-      _chewie = ChewieController(videoPlayerController: video, autoPlay: true, isLive: true, allowFullScreen: false, showControls: true, errorBuilder: (_, message) => _recovery(message));
-      setState(() {});
-    } catch (_) {
-      _startRecovery(channel);
+      final controller = VideoPlayerController.networkUrl(Uri.parse(channel.streamUrl));
+      await controller.initialize();
+      if (!mounted) {
+        controller.dispose();
+        return;
+      }
+
+      _videoController = controller;
+      _chewieController = ChewieController(
+        videoPlayerController: controller,
+        autoPlay: true,
+        isLive: true,
+        allowFullScreen: false,
+        showControls: true,
+        aspectRatio: controller.value.aspectRatio == 0 ? 16 / 9 : controller.value.aspectRatio,
+        materialProgressColors: ChewieProgressColors(
+          playedColor: TivioColors.cyan,
+          handleColor: TivioColors.cyan,
+          bufferedColor: TivioColors.cyan.withOpacity(0.35),
+          backgroundColor: Colors.white24,
+        ),
+        placeholder: Container(
+          color: Colors.black,
+          child: const Center(child: CircularProgressIndicator(color: TivioColors.cyan)),
+        ),
+        errorBuilder: (context, errorMessage) {
+          _scheduleReconnect(channel);
+          return _errorRecoveryCard(errorMessage);
+        },
+      );
+
+      if (mounted) {
+        setState(() {});
+      }
+    } catch (error) {
+      debugPrint('Tune failed: $error');
+      _scheduleReconnect(channel);
+      if (mounted) {
+        setState(() {});
+      }
     }
   }
 
-  void _startRecovery(IptvChannel channel) {
-    if (!mounted || reconnecting) return;
-    setState(() { reconnecting = true; retrySeconds = 5; });
-    _retryTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (!mounted) return timer.cancel();
-      if (retrySeconds > 1) setState(() => retrySeconds--); else { timer.cancel(); _tune(channel); }
+  void _scheduleReconnect(IptvChannel channel) {
+    if (_reconnecting) {
+      return;
+    }
+
+    setState(() {
+      _reconnecting = true;
+    });
+
+    _reconnectTimer?.cancel();
+    _reconnectTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+
+      if (_retrySeconds > 1) {
+        setState(() => _retrySeconds--);
+      } else {
+        timer.cancel();
+        setState(() => _reconnecting = false);
+        _tuneInto(channel);
+      }
     });
   }
 
-  Widget _recovery(String message) => Center(child: Column(mainAxisSize: MainAxisSize.min, children: [const Icon(Icons.wifi_off_rounded, size: 42, color: TivioColors.cyan), const SizedBox(height: 12), Text(message, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white70)), const SizedBox(height: 14), Text('Reconnecting in $retrySeconds…', style: const TextStyle(color: TivioColors.cyan))]));
+  int _retrySeconds = 5;
 
-  void _toggleFavorite(IptvChannel channel) => setState(() => favorites.contains(channel.id) ? favorites.remove(channel.id) : favorites.add(channel.id));
+  Widget _errorRecoveryCard(String message) {
+    return Container(
+      color: Colors.black,
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.wifi_off_rounded, size: 42, color: TivioColors.cyan),
+            const SizedBox(height: 12),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Text(
+                message,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white70),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Retrying in $_retrySeconds seconds',
+              style: const TextStyle(color: TivioColors.cyan, fontWeight: FontWeight.w600),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _toggleFavorite(IptvChannel channel) {
+    setState(() {
+      if (_favorites.contains(channel.id)) {
+        _favorites.remove(channel.id);
+      } else {
+        _favorites.add(channel.id);
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    final isWide = MediaQuery.sizeOf(context).width >= 850;
-    return Scaffold(body: SafeArea(child: Row(children: [if (isWide && sidebarOpen) _buildSidebar(), Expanded(child: Column(children: [_buildTopBar(isWide), Expanded(child: _buildContent(isWide))]))])));
+    return Scaffold(
+      backgroundColor: TivioColors.background,
+      body: SafeArea(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final compact = constraints.maxWidth < 960;
+            return Row(
+              children: [
+                if (!compact && _sidebarVisible) _buildSidebar(),
+                Expanded(
+                  child: Column(
+                    children: [
+                      _buildTopBar(compact),
+                      Expanded(
+                        child: _showSettings ? _buildSettingsScreen() : _buildMainContent(compact),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
   }
 
-  Widget _buildTopBar(bool isWide) => Container(height: 68, padding: const EdgeInsets.symmetric(horizontal: 22), decoration: const BoxDecoration(color: TivioColors.panel, border: Border(bottom: BorderSide(color: Colors.white10))), child: Row(children: [if (!isWide) IconButton(onPressed: () => setState(() => sidebarOpen = !sidebarOpen), icon: const Icon(Icons.menu)), const Text('TIVIO', style: TextStyle(fontSize: 25, fontWeight: FontWeight.w900, letterSpacing: 4, color: TivioColors.cyan)), const SizedBox(width: 28), const Text('LIVE TV', style: TextStyle(fontWeight: FontWeight.bold)), const Spacer(), SizedBox(width: 230, height: 38, child: TextField(onChanged: (v) => setState(() => query = v), decoration: const InputDecoration(hintText: 'Search channels', prefixIcon: Icon(Icons.search), filled: true, fillColor: TivioColors.background, border: OutlineInputBorder(borderSide: BorderSide.none)))), IconButton(onPressed: () => setState(() => settings = !settings), icon: const Icon(Icons.tune_rounded))]));
+  Widget _buildSidebar() {
+    return Container(
+      width: 220,
+      decoration: const BoxDecoration(
+        color: TivioColors.panel,
+        border: Border(right: BorderSide(color: Colors.white10)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 18, 16, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'TIVIO',
+              style: TextStyle(
+                color: TivioColors.cyan,
+                fontSize: 26,
+                letterSpacing: 3,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 22),
+            const Text(
+              'BROWSE',
+              style: TextStyle(
+                color: TivioColors.muted,
+                fontSize: 11,
+                letterSpacing: 1.6,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 10),
+            ..._categories.map((category) => _categoryTile(category)),
+            const Spacer(),
+            _categoryTile('Favorites'),
+            const SizedBox(height: 12),
+            const Text(
+              'v1.0 • STREAM READY',
+              style: TextStyle(color: TivioColors.muted, fontSize: 11),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
-  Widget _buildSidebar() => Container(width: 210, color: TivioColors.panel, padding: const EdgeInsets.fromLTRB(14, 24, 14, 12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Padding(padding: EdgeInsets.all(12), child: Text('BROWSE', style: TextStyle(color: TivioColors.muted, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1.4))), ...categories.map((c) => _navItem(c, c == category ? Icons.radio : Icons.grid_view_rounded)), const Spacer(), _navItem('Favorites', Icons.favorite_rounded, favoritesOnly: true), const Padding(padding: EdgeInsets.all(12), child: Text('v1.0 • TIVIO', style: TextStyle(color: TivioColors.muted, fontSize: 11)))]));
+  Widget _categoryTile(String category) {
+    final isSelected = category == 'Favorites' ? _selectedCategory == 'Favorites' : category == _selectedCategory;
+    final isFavorites = category == 'Favorites';
 
-  Widget _navItem(String label, IconData icon, {bool favoritesOnly = false}) => ListTile(dense: true, selected: (!favoritesOnly && label == category), selectedTileColor: TivioColors.cyan.withOpacity(.12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)), leading: Icon(icon, size: 19, color: label == category ? TivioColors.cyan : TivioColors.muted), title: Text(label, style: TextStyle(color: label == category ? Colors.white : TivioColors.muted)), onTap: () => setState(() { category = favoritesOnly ? 'Favorites' : label; if (favoritesOnly) channels = channels; }));
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      child: ListTile(
+        dense: true,
+        selected: isSelected,
+        selectedTileColor: TivioColors.cyan.withOpacity(0.12),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+        leading: Icon(
+          isFavorites ? Icons.favorite_rounded : Icons.grid_view_rounded,
+          size: 18,
+          color: isSelected ? TivioColors.cyan : TivioColors.muted,
+        ),
+        title: Text(
+          category,
+          style: TextStyle(
+            color: isSelected ? Colors.white : TivioColors.muted,
+            fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+          ),
+        ),
+        onTap: () => setState(() {
+          _selectedCategory = category;
+        }),
+      ),
+    );
+  }
 
-  Widget _buildContent(bool isWide) => settings ? _buildSettings() : SingleChildScrollView(padding: const EdgeInsets.all(22), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [_buildHero(isWide), const SizedBox(height: 24), Row(children: [const Text('CHANNELS', style: TextStyle(fontWeight: FontWeight.w800, letterSpacing: 1.5)), const Spacer(), Text('${visibleChannels.length} available', style: const TextStyle(color: TivioColors.muted))]), const SizedBox(height: 14), _buildChannels(isWide)]));
+  Widget _buildTopBar(bool compact) {
+    return Container(
+      height: 68,
+      decoration: const BoxDecoration(
+        color: TivioColors.panel,
+        border: Border(bottom: BorderSide(color: Colors.white10)),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Row(
+        children: [
+          if (compact)
+            IconButton(
+              onPressed: () => setState(() => _sidebarVisible = !_sidebarVisible),
+              icon: const Icon(Icons.menu_rounded),
+            ),
+          const Text(
+            'LIVE TV',
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 1.2,
+            ),
+          ),
+          const Spacer(),
+          SizedBox(
+            width: compact ? 180 : 260,
+            height: 40,
+            child: TextField(
+              onChanged: (value) => setState(() => _searchQuery = value),
+              decoration: InputDecoration(
+                hintText: 'Search channels',
+                hintStyle: const TextStyle(color: TivioColors.muted),
+                filled: true,
+                fillColor: TivioColors.background,
+                prefixIcon: const Icon(Icons.search_rounded, color: TivioColors.muted),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 10),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          IconButton(
+            onPressed: () => setState(() => _showSettings = !_showSettings),
+            icon: const Icon(Icons.tune_rounded),
+          ),
+        ],
+      ),
+    );
+  }
 
-  Widget _buildHero(bool isWide) { final ch = current; return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [AspectRatio(aspectRatio: isWide ? 2.25 : 1.65, child: Container(decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(18), border: Border.all(color: Colors.white12)), child: _chewie != null ? ClipRRect(borderRadius: BorderRadius.circular(18), child: Chewie(controller: _chewie!)) : Center(child: reconnecting ? _recovery('Stream unavailable') : const CircularProgressIndicator(color: TivioColors.cyan)))), if (ch != null) Padding(padding: const EdgeInsets.only(top: 15), child: Row(children: [Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(ch.name, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)), const SizedBox(height: 4), Text('${ch.category}  •  ${ch.details}', style: const TextStyle(color: TivioColors.muted))])), IconButton(onPressed: () => _toggleFavorite(ch), icon: Icon(favorites.contains(ch.id) ? Icons.favorite : Icons.favorite_border, color: TivioColors.cyan))]))]); }
+  Widget _buildMainContent(bool compact) {
+    final list = _filteredChannels;
+    final current = _currentChannel;
 
-  Widget _buildChannels(bool isWide) { final list = category == 'Favorites' ? visibleChannels.where((c) => favorites.contains(c.id)).toList() : visibleChannels; return GridView.builder(shrinkWrap: true, physics: const NeverScrollableScrollPhysics(), itemCount: list.length, gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: isWide ? 4 : 2, crossAxisSpacing: 12, mainAxisSpacing: 12, childAspectRatio: 1.45), itemBuilder: (_, i) { final ch = list[i]; final selected = ch.id == currentId; return InkWell(onTap: () => _tune(ch), borderRadius: BorderRadius.circular(14), child: Container(padding: const EdgeInsets.all(14), decoration: BoxDecoration(color: selected ? TivioColors.cyan.withOpacity(.13) : TivioColors.panel, borderRadius: BorderRadius.circular(14), border: Border.all(color: selected ? TivioColors.cyan : Colors.white10)), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Row(children: [CircleAvatar(radius: 17, backgroundColor: TivioColors.panel2, backgroundImage: ch.logo.isEmpty ? null : NetworkImage(ch.logo), child: ch.logo.isEmpty ? const Icon(Icons.tv, size: 17, color: TivioColors.cyan) : null), const Spacer(), IconButton(padding: EdgeInsets.zero, constraints: const BoxConstraints(), onPressed: () => _toggleFavorite(ch), icon: Icon(favorites.contains(ch.id) ? Icons.favorite : Icons.favorite_border, size: 18, color: TivioColors.cyan))]), const Spacer(), Text(ch.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold)), const SizedBox(height: 4), Text(ch.category, style: const TextStyle(fontSize: 12, color: TivioColors.muted))]))); }); }
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildPlayerPanel(),
+          if (current != null) ...[
+            const SizedBox(height: 18),
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        current.name,
+                        style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '${current.category} • ${current.program}',
+                        style: const TextStyle(color: TivioColors.muted),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => _toggleFavorite(current),
+                  icon: Icon(
+                    _favorites.contains(current.id) ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+                    color: TivioColors.cyan,
+                  ),
+                ),
+              ],
+            ),
+          ],
+          const SizedBox(height: 20),
+          Row(
+            children: [
+              const Text(
+                'CHANNELS',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, letterSpacing: 1.2),
+              ),
+              const Spacer(),
+              Text(
+                '${list.length} available',
+                style: const TextStyle(color: TivioColors.muted),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: list.length,
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: compact ? 2 : 4,
+              crossAxisSpacing: 14,
+              mainAxisSpacing: 14,
+              childAspectRatio: compact ? 1.25 : 1.4,
+            ),
+            itemBuilder: (context, index) {
+              final channel = list[index];
+              final selected = channel.id == _currentChannelId;
+              return InkWell(
+                borderRadius: BorderRadius.circular(16),
+                onTap: () => _tuneInto(channel),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  decoration: BoxDecoration(
+                    color: selected ? TivioColors.cyan.withOpacity(0.12) : TivioColors.panel,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: selected ? TivioColors.cyan : Colors.white10,
+                    ),
+                  ),
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          CircleAvatar(
+                            radius: 18,
+                            backgroundColor: TivioColors.panelAlt,
+                            backgroundImage: NetworkImage(channel.logo),
+                          ),
+                          const Spacer(),
+                          IconButton(
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                            onPressed: () => _toggleFavorite(channel),
+                            icon: Icon(
+                              _favorites.contains(channel.id) ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+                              size: 18,
+                              color: TivioColors.cyan,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        channel.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        channel.category,
+                        style: const TextStyle(color: TivioColors.muted, fontSize: 12),
+                      ),
+                      const SizedBox(height: 10),
+                      LinearProgressIndicator(
+                        value: channel.progress,
+                        minHeight: 4,
+                        backgroundColor: Colors.white10,
+                        valueColor: const AlwaysStoppedAnimation<Color>(TivioColors.cyan),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
 
-  Widget _buildSettings() => Padding(padding: const EdgeInsets.all(24), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('SETTINGS', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, letterSpacing: 1.2)), const SizedBox(height: 22), _setting('Playlist source', widget.playlistUrl ?? 'Built-in TIVIO demo playlist'), _setting('Playback', 'Live mode • Auto play enabled'), _setting('Channels', '${channels.length} loaded'), const SizedBox(height: 18), FilledButton.icon(onPressed: _loadPlaylist, icon: const Icon(Icons.refresh), label: const Text('Reload playlist'))]));
-  Widget _setting(String title, String value) => ListTile(contentPadding: EdgeInsets.zero, title: Text(title), subtitle: Text(value, style: const TextStyle(color: TivioColors.muted)), trailing: const Icon(Icons.chevron_right, color: TivioColors.muted));
+  Widget _buildSettingsScreen() {
+    return Padding(
+      padding: const EdgeInsets.all(22),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'SETTINGS',
+            style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, letterSpacing: 1.2),
+          ),
+          const SizedBox(height: 20),
+          _settingsTile('Playlist source', widget.playlistUrl ?? 'Built-in demo playlist'),
+          _settingsTile('Loaded channels', '${_channels.length}'),
+          _settingsTile('Favorites', '${_favorites.length} saved'),
+          _settingsTile('Playback', 'Auto play enabled • Live mode'),
+          const SizedBox(height: 20),
+          ElevatedButton.icon(
+            onPressed: _loadPlaylist,
+            icon: const Icon(Icons.refresh_rounded),
+            label: const Text('Reload playlist'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: TivioColors.cyan,
+              foregroundColor: Colors.black,
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+          ),
+          if (_loadError != null) ...[
+            const SizedBox(height: 20),
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.red.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.red.withOpacity(0.45)),
+              ),
+              child: Text(
+                'Load status: $_loadError',
+                style: const TextStyle(color: Colors.white70),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
 
-  final List<IptvChannel> _demoChannels = const [IptvChannel(id: 'tivio-one', name: 'TIVIO One', logo: '', category: 'Featured', program: 'Live now', details: 'TIVIO Originals', progress: .4, streamUrl: demoPlaylist), IptvChannel(id: 'tivio-cinema', name: 'TIVIO Cinema', logo: '', category: 'Movies', program: 'Now showing', details: 'Premium cinema', progress: .7, streamUrl: demoPlaylist), IptvChannel(id: 'tivio-sport', name: 'TIVIO Sport', logo: '', category: 'Sports', program: 'Live arena', details: 'All the action', progress: .55, streamUrl: demoPlaylist)];
+  Widget _settingsTile(String title, String value) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: TivioColors.panel,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
+                const SizedBox(height: 4),
+                Text(value, style: const TextStyle(color: TivioColors.muted)),
+              ],
+            ),
+          ),
+          const Icon(Icons.chevron_right_rounded, color: TivioColors.muted),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPlayerPanel() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.black,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.white12),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(18),
+        child: AspectRatio(
+          aspectRatio: 16 / 9,
+          child: _chewieController != null
+              ? Chewie(controller: _chewieController!)
+              : Container(
+                  color: Colors.black,
+                  child: Center(
+                    child: _loading
+                        ? const CircularProgressIndicator(color: TivioColors.cyan)
+                        : _reconnecting
+                            ? _errorRecoveryCard('Connection lost')
+                            : const Icon(Icons.tv_rounded, size: 54, color: TivioColors.cyan),
+                  ),
+                ),
+        ),
+      ),
+    );
+  }
 }
-
-extension FirstOrNullExtension<T> on Iterable<T> { T? get firstOrNull => isEmpty ? null : first; }
